@@ -13,7 +13,6 @@ from xbmcgui import ListItem
 from colors import Colors
 from stub import KodiStub
 
-
 DRIVE_NOT_READY = 1
 ENGLISH_NAME = 2
 ISO_639_1 = 0
@@ -38,7 +37,6 @@ SERVER_ZEROCONF = 7
 TRAY_CLOSED_MEDIA_PRESENT = 96
 TRAY_CLOSED_NO_MEDIA = 64
 TRAY_OPEN = 16
-
 
 # Custom AddonData type
 AddonData = namedtuple('AddonData', [
@@ -317,15 +315,24 @@ def executeJSONRPC(jsonrpccommand):  # NOSONAR
     json_method = json_data["method"]
     json_responses = os.environ.get("KODI_STUB_RPC_RESPONSES")
     if not json_responses:
-        raise ValueError("Could not find JSON Response folder. Use the environment variable KODI_STUB_RPC_RESPONSES to set one")
+        raise ValueError(
+            "Could not find JSON Response folder. Use the environment variable KODI_STUB_RPC_RESPONSES to set one")
 
-    json_response = os.path.join(json_responses, "{}.json".format(json_method.lower()))
+    path = "{}.json".format(os.path.join(os.path.join(json_responses, json_method.lower())))
+    if os.path.isfile(path):
+        with io.open(path, mode='r', encoding='utf-8') as fd:
+            stub_content = json.loads(fd.read())
+            if isinstance(stub_content, dict):
+                return json.dumps(stub_content)
+            try:
+                return json.dumps(next(stub.get('response')
+                                       for stub in stub_content
+                                       if json_data.get('params')
+                                       and stub.get('request', {}).get('method') == json_data.get('method')
+                                       and stub.get('request', {}).get('params') == json_data.get('params')))
+            except StopIteration:
+                pass
 
-    if os.path.isfile(json_response):
-        with io.open(json_response, mode='r', encoding='utf-8') as fd:
-            return fd.read()
-
-    # {"error":{"code":-32602,"message":"Invalid params."},"id":1,"jsonrpc":"2.0"}
     return '{"id":1,"jsonrpc":"2.0","result":"OK"}'
 
 
@@ -350,23 +357,31 @@ def translatePath(path):  # NOSONAR
 
     """
 
-    if path.startswith("special://profile/"):
-        sub_path = path.replace("special://profile/", "")
-        if not __add_on_info.kodi_profile_path:
-            raise ValueError("Missing kodi_profile_path data")
+    def get_return_path(base_path, name, *segments):
+        if not base_path:
+            raise ValueError("Missing __kodi_{}_path data".format(name))
+        new_path = os.path.join(base_path, *[i.replace("/", os.sep) for i in segments if i and i != ''])
 
-        return_path = os.path.join(__add_on_info.kodi_profile_path, sub_path.replace("/", os.sep))
-        if not os.path.exists(return_path):
-            raise ValueError("Invalid path in profile specified: %s" % (path,))
+        if not os.path.exists(new_path):
+            raise ValueError("Invalid path specified: {}".format(path, ))
+
+        return new_path
+
+    if path.startswith("special://profile/"):
+        return_path = get_return_path(__add_on_info.kodi_profile_path,
+                                      "profile",
+                                      path.replace("special://profile/", ""))
 
     elif path.startswith("special://home/"):
-        sub_path = path.replace("special://home/", "")
-        if not __add_on_info.kodi_home_path:
-            raise ValueError("Missing __kodi_home_path data")
+        return_path = get_return_path(__add_on_info.kodi_home_path,
+                                      "home",
+                                      path.replace("special://home/", ""))
 
-        return_path = os.path.join(__add_on_info.kodi_home_path, sub_path.replace("/", os.sep))
-        if not os.path.isdir(return_path):
-            raise ValueError("Invalid Kodi Home path: %s" % (path,))
+    elif path.startswith("special://xbmcbin/"):
+        return_path = get_return_path(__add_on_info.kodi_home_path,
+                                      "home",
+                                      "system",
+                                      path.replace("special://xbmcbin/", ""))
 
     elif os.path.isabs(path):
         return path
@@ -444,7 +459,7 @@ def getInfoLabel(infoTag):  # NOSONAR
 
     if infoTag == "system.buildversion":
         return "18.1 Git:20160424-c327c53"
-    
+
     return "InfoLabel:{}".format(infoTag)
 
 
@@ -578,7 +593,7 @@ def get_add_on_info_from_calling_script(add_on_id=None, print_info=False):
         "- Add-on ID:                        {} \n"
         "- Add-on Path:                      {} \n"
         "- Kodi Profile (special://profile): {} \n"
-        .format(a.kodi_home_path, a.kodi_profile_path, a.add_on_id, a.add_on_path),
+            .format(a.kodi_home_path, a.kodi_profile_path, a.add_on_id, a.add_on_path),
         color=Colors.Blue
     )
     return a
